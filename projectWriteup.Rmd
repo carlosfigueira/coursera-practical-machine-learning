@@ -1,0 +1,80 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Carlos Figueira"
+date: "Saturday, May 23, 2015"
+output: html_document
+---
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, we'll use data from accelerometers on the belt, forearm, arm and dumbell of the study participants, to evaluate whether the barbell lifts were done correctly or not in 5 different ways. The source of the data used in this project is from the website at http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## Data loading and cleanup
+
+The dataset from the source contains a lot more information than we actually need - 160 variables in total, while the problem statement specifies that we should look at the accelerometer data from belt / forearm / arm / dumbell to predict the class. So lets load and clean the data first.
+
+```{r echo=TRUE}
+library(caret)
+library(randomForest)
+trainingUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+localTrainingFile <- "pml-training.csv"
+if (!file.exists(localTrainingFile)) {
+    download.file(trainingUrl, destfile = localTrainingFile)
+}
+pmlTraining <- read.csv(localTrainingFile)
+
+importantVars <- names(pmlTraining)[grep("^accel_[^_]+_[xyz]$", names(pmlTraining))]
+training <- pmlTraining[,c("classe", importantVars)]
+
+testingUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+localTestingFile <- "pml-testing.csv"
+if (!file.exists(localTestingFile)) {
+    download.file(testingUrl, destfile = localTestingFile)
+}
+pmlTesting <- read.csv(localTestingFile)
+testing <- pmlTesting[,importantVars]
+```
+
+## Modeling and training
+
+Now that the data has been loaded, we can start the training process. Since the output variable isn't binary, we cannot use a simple GLM model. For this scenario, we'll use a random forest model (which should give a better accuracy), with a K-fold cross-validation to get a better understanding of the out-of-sample error (we'll use K = 5). For each fold we'll analyse the erros and also predict the values from the testing set - at the end we'll use a majority decision among the 5 models to decide the class of the entries in the testing set.
+
+```{r echo=TRUE, cache=TRUE}
+set.seed(20150523)
+K = 5
+testPredictions <- data.frame()
+confMatrices = data.frame()
+folds <- createFolds(y = training$classe, k = K, list = TRUE, returnTrain = TRUE)
+for (i in 1:K) {
+    foldTrain <- training[folds[[i]],]
+    foldTest <- training[-folds[[i]],]
+    modFit <- train(classe ~ ., data = foldTrain, method = "rf")
+    foldPredictions <- predict(modFit, foldTest)
+    confMatrix <- confusionMatrix(foldTest$classe, foldPredictions)
+    if (nrow(confMatrices) == 0) {
+        confMatrices <- data.frame(t(confMatrix$overall))
+    } else {
+        confMatrices <- rbind(confMatrices, confMatrix$overall)
+    }
+    testPredictions <- rbind(testPredictions, as.character(predict(modFit, testing)))
+}
+
+names(testPredictions) <- sapply(1:ncol(testPredictions), function(n) paste0("P", n))
+for (i in 1:ncol(testPredictions)) testPredictions[,i] <- as.character(testPredictions[,i])
+```
+
+At this point we can average our accuracy values to have a good estimate of the out-of-sample error for our model:
+
+```{r echo=TRUE}
+confMatrices
+```
+
+Averaging the values yields an accuracy a little above 95%, which we'll consider pretty good for this scenario.
+
+We can also look at the predicted values for the test set.
+
+```{r echo=TRUE}
+testPredictions
+```
+
+In 19 out of 20 of them we had a unanimous decision, and in the remaining case we have a 4-1 majority, which is the value we'll assume for the testing submission.
